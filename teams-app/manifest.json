@@ -2,7 +2,7 @@
   "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "manifestVersion": "1.16",
   "version": "1.0.0",
-  "id": "REPLACE-WITH-NEW-GUID",
+  "id": "96f2e8af-980a-46cc-9dff-1210748b1509",
   "packageName": "com.yourcompany.chorus",
   "developer": {
     "name": "Your Company",
@@ -25,7 +25,7 @@
   "accentColor": "#5558AF",
   "bots": [
     {
-      "botId": "REPLACE-WITH-NOUS-BOT-APP-ID",
+      "botId": "9d723f93-0975-4090-acb7-043ffac4a232",
       "scopes": [
         "personal",
         "team",
@@ -50,7 +50,7 @@
       ]
     },
     {
-      "botId": "REPLACE-WITH-CLAUDE-BOT-APP-ID",
+      "botId": "163aebd2-1198-4190-b8ce-c4722b5fec49",
       "scopes": [
         "personal",
         "team",

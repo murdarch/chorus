@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     claude_bot_app_id: str = Field(..., description="Azure App ID for Claude bot")
     claude_bot_app_password: str = Field(..., description="Azure App Password for Claude bot")
 
+    # Discord Bot tokens
+    discord_nous_token: str = Field(default="", description="Discord token for Nous bot")
+    discord_claude_token: str = Field(default="", description="Discord token for Claude bot")
+
     # Server configuration
     port: int = Field(default=3978, description="Server port")
     host: str = Field(default="0.0.0.0", description="Server host")
@@ -41,15 +45,17 @@ class BotConfig:
     def __init__(
         self,
         bot_id: str,
-        app_id: str,
-        app_password: str,
         name: str,
         model: str,
         system_prompt: str,
+        app_id: str = "",
+        app_password: str = "",
+        discord_token: str = "",
     ):
         self.bot_id = bot_id
         self.app_id = app_id
         self.app_password = app_password
+        self.discord_token = discord_token
         self.name = name
         self.model = model
         self.system_prompt = system_prompt
@@ -72,36 +78,71 @@ def setup_logging(log_level: str = "INFO") -> None:
 
 
 def get_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
-    """Create bot configurations from settings."""
+    """Create bot configurations for Teams from settings."""
 
     configs = {
         "nous_bot": BotConfig(
             bot_id="nous_bot",
-            app_id=settings.nous_bot_app_id,
-            app_password=settings.nous_bot_app_password,
             name="Nous",
             model="nousresearch/hermes-4-405b",
             system_prompt=(
-                "You are Nous, an AI assistant participating in a Microsoft Teams chat. "
+                "You are Nous, an AI assistant participating in a chat. "
                 "You can interact naturally with humans and other AI bots in the conversation. "
                 "Be helpful, engaging, and conversational. You don't need to respond to every "
                 "message - only when you have something valuable to contribute. You can also "
                 "react to messages with emoji when appropriate."
             ),
+            app_id=settings.nous_bot_app_id,
+            app_password=settings.nous_bot_app_password,
         ),
         "claude_bot": BotConfig(
             bot_id="claude_bot",
-            app_id=settings.claude_bot_app_id,
-            app_password=settings.claude_bot_app_password,
             name="Claude",
             model="anthropic/claude-sonnet-4.5",
             system_prompt=(
-                "You are Claude, an AI assistant participating in a Microsoft Teams chat. "
+                "You are Claude, an AI assistant participating in a chat. "
                 "You can interact naturally with humans and other AI bots in the conversation. "
                 "Be thoughtful, helpful, and conversational. You don't need to respond to every "
                 "message - only when you have something valuable to contribute. You can also "
                 "react to messages with emoji when appropriate."
             ),
+            app_id=settings.claude_bot_app_id,
+            app_password=settings.claude_bot_app_password,
+        ),
+    }
+
+    return configs
+
+
+def get_discord_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
+    """Create bot configurations for Discord from settings."""
+
+    configs = {
+        "discord_nous": BotConfig(
+            bot_id="discord_nous",
+            name="Nous",
+            model="nousresearch/hermes-4-405b",
+            system_prompt=(
+                "You are Nous, an AI assistant participating in a Discord chat. "
+                "You can interact naturally with humans and other AI bots in the conversation. "
+                "Be helpful, engaging, and conversational. You don't need to respond to every "
+                "message - only when you have something valuable to contribute. You can also "
+                "react to messages with emoji when appropriate."
+            ),
+            discord_token=settings.discord_nous_token,
+        ),
+        "discord_claude": BotConfig(
+            bot_id="discord_claude",
+            name="Claude",
+            model="anthropic/claude-sonnet-4.5",
+            system_prompt=(
+                "You are Claude, an AI assistant participating in a Discord chat. "
+                "You can interact naturally with humans and other AI bots in the conversation. "
+                "Be thoughtful, helpful, and conversational. You don't need to respond to every "
+                "message - only when you have something valuable to contribute. You can also "
+                "react to messages with emoji when appropriate."
+            ),
+            discord_token=settings.discord_claude_token,
         ),
     }
 
