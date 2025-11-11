@@ -1,0 +1,83 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "REPLACE-WITH-NEW-GUID",
+  "packageName": "com.yourcompany.chorus",
+  "developer": {
+    "name": "Your Company",
+    "websiteUrl": "https://yourcompany.com",
+    "privacyUrl": "https://yourcompany.com/privacy",
+    "termsOfUseUrl": "https://yourcompany.com/terms"
+  },
+  "name": {
+    "short": "Chorus Bots",
+    "full": "Chorus Multi-LLM Chat Bots"
+  },
+  "description": {
+    "short": "AI bots that chat together",
+    "full": "Multiple LLM-powered bots (Nous and Claude) that participate naturally in Teams conversations. They can respond to questions, interact with each other, remember context, and react with emojis."
+  },
+  "icons": {
+    "outline": "icons/outline-icon.png",
+    "color": "icons/color-icon.png"
+  },
+  "accentColor": "#5558AF",
+  "bots": [
+    {
+      "botId": "REPLACE-WITH-NOUS-BOT-APP-ID",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupchat"
+          ],
+          "commands": [
+            {
+              "title": "Hello",
+              "description": "Say hello to Nous"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "botId": "REPLACE-WITH-CLAUDE-BOT-APP-ID",
+      "scopes": [
+        "personal",
+        "team",
+        "groupchat"
+      ],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": [
+            "personal",
+            "team",
+            "groupchat"
+          ],
+          "commands": [
+            {
+              "title": "Hello",
+              "description": "Say hello to Claude"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": [
+    "identity",
+    "messageTeamMembers"
+  ],
+  "validDomains": []
+}

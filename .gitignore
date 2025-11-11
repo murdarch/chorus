@@ -1,0 +1,50 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# IMPORTANT: Environment variables with secrets
+.env
+.env.local
+.env.*.local
+
+# Database files (contain user data)
+*.db
+*.sqlite
+*.sqlite3
+data/memories/*.db
+
+# Logs
+*.log
+logs/
+
+# Teams app package (generated)
+teams-app/chorus-app.zip
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type checking
+.mypy_cache/
+
+# uv lock file (can be regenerated)
+uv.lock
