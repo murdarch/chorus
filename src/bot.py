@@ -18,15 +18,35 @@ logger = logging.getLogger(__name__)
 class ConversationHistory:
     """Manages conversation history for a bot."""
 
-    def __init__(self, max_messages: int = 10):
+    def __init__(
+        self,
+        max_messages: int = 10,
+        max_verbatim_messages: int = 30,
+        llm_client = None,
+        model: str = None,
+        bot_name: str = None,
+    ):
         """Initialize conversation history tracker.
 
         Args:
             max_messages: Maximum number of messages to keep per conversation
+            max_verbatim_messages: Maximum messages to keep verbatim (rest get summarized)
+            llm_client: LLM client for summarization
+            model: Model identifier for summarization
+            bot_name: Bot name for logging
         """
         self.max_messages = max_messages
+        self.max_verbatim_messages = max_verbatim_messages
+        self.llm_client = llm_client
+        self.model = model
+        self.bot_name = bot_name
+
         # Store messages per conversation ID
         self._histories: Dict[str, List[Dict]] = {}
+        # Store summaries per conversation ID
+        self._summaries: Dict[str, List[str]] = {}
+        # Track if summarization is in progress
+        self._summarizing: Dict[str, bool] = {}
 
     def add_message(self, conversation_id: str, sender: str, text: str, timestamp: datetime = None):
         """Add a message to conversation history.
@@ -39,6 +59,7 @@ class ConversationHistory:
         """
         if conversation_id not in self._histories:
             self._histories[conversation_id] = []
+            self._summaries[conversation_id] = []
 
         message = {
             "sender": sender,
@@ -52,6 +73,15 @@ class ConversationHistory:
         # Keep only the most recent messages
         if len(history) > self.max_messages:
             self._histories[conversation_id] = history[-self.max_messages:]
+
+        # Check if we need to summarize
+        # Only summarize if we have summarization enabled and history is getting long
+        if (self.llm_client and self.model and
+            len(history) > self.max_verbatim_messages and
+            not self._summarizing.get(conversation_id, False)):
+
+            # Trigger async summarization
+            asyncio.create_task(self._auto_summarize(conversation_id))
 
     def get_history(self, conversation_id: str) -> List[Dict]:
         """Get conversation history for a specific conversation.
@@ -84,6 +114,70 @@ class ConversationHistory:
 
         return "\n".join(lines)
 
+    def get_summaries(self, conversation_id: str) -> List[str]:
+        """Get conversation summaries for a specific conversation.
+
+        Args:
+            conversation_id: Unique conversation identifier
+
+        Returns:
+            List of summary strings
+        """
+        return self._summaries.get(conversation_id, [])
+
+    async def _auto_summarize(self, conversation_id: str):
+        """Automatically summarize older messages in a conversation.
+
+        Args:
+            conversation_id: Unique conversation identifier
+        """
+        try:
+            # Mark as summarizing to prevent concurrent summarization
+            self._summarizing[conversation_id] = True
+
+            history = self._histories.get(conversation_id, [])
+            if len(history) <= self.max_verbatim_messages:
+                return
+
+            # Calculate how many messages to summarize
+            messages_to_summarize_count = len(history) - self.max_verbatim_messages
+
+            # Get the messages to summarize
+            messages_to_summarize = history[:messages_to_summarize_count]
+
+            logger.info(
+                f"[{self.bot_name}] Auto-summarizing {messages_to_summarize_count} messages "
+                f"for conversation {conversation_id}"
+            )
+
+            # Create summary
+            summary = await self.llm_client.summarize_conversation(
+                model=self.model,
+                messages=messages_to_summarize,
+                bot_name=self.bot_name,
+            )
+
+            if summary:
+                # Add summary to list
+                if conversation_id not in self._summaries:
+                    self._summaries[conversation_id] = []
+
+                self._summaries[conversation_id].append(summary)
+
+                # Keep only the verbatim messages
+                self._histories[conversation_id] = history[messages_to_summarize_count:]
+
+                logger.info(
+                    f"[{self.bot_name}] Created summary for conversation {conversation_id}: "
+                    f"{summary[:100]}..."
+                )
+
+        except Exception as e:
+            logger.error(f"Error during auto-summarization: {e}", exc_info=True)
+
+        finally:
+            self._summarizing[conversation_id] = False
+
 
 class ChorusBot:
     """Main bot class for handling Teams interactions."""
@@ -95,9 +189,16 @@ class ChorusBot:
             config: Bot configuration
         """
         self.config = config
-        self.history = ConversationHistory(max_messages=10)
         self.llm_client = get_llm_client()
-        self._last_responder = None  # Track who responded last
+        self.history = ConversationHistory(
+            max_messages=config.max_messages,
+            max_verbatim_messages=config.max_verbatim_messages,
+            llm_client=self.llm_client,
+            model=config.model,
+            bot_name=config.name,
+        )
+        self._consecutive_responses: Dict[str, int] = {}  # Track consecutive responses per conversation
+        self.max_consecutive_responses = 10  # Allow up to 10 turns before yielding
 
         # Initialize memory system
         self.memory = MemorySystem(
@@ -148,6 +249,10 @@ class ChorusBot:
         if self._is_own_message(activity):
             logger.debug(f"[{self.config.bot_id}] Ignoring own message")
             return
+
+        # Reset consecutive response counter when someone else speaks
+        # (This allows for natural back-and-forth)
+        self._consecutive_responses[conversation_id] = 0
 
         # Add to conversation history
         self.history.add_message(
@@ -228,9 +333,10 @@ class ChorusBot:
             logger.info(f"[{self.config.bot_id}] Bot name found in message - will respond")
             return True
 
-        # Don't respond twice in a row
-        if self._last_responder == self.config.name:
-            logger.info(f"[{self.config.bot_id}] Just responded - skipping to avoid dominating")
+        # Check if we've responded too many times in a row
+        consecutive_count = self._consecutive_responses.get(conversation_id, 0)
+        if consecutive_count >= self.max_consecutive_responses:
+            logger.info(f"[{self.config.bot_id}] Responded {consecutive_count} times in a row - yielding to avoid dominating")
             return False
 
         # Use LLM to decide
@@ -241,6 +347,8 @@ class ChorusBot:
             bot_name=self.config.name,
             current_message=activity.text or "",
             sender=sender,
+            max_decision_context=self.config.max_decision_context,
+            max_tokens_decision=self.config.max_tokens_decision,
         )
 
         return should_respond
@@ -258,8 +366,9 @@ class ChorusBot:
         sender = activity.from_property.name or activity.from_property.id
         conversation_id = activity.conversation.id
 
-        # Get conversation history
+        # Get conversation history and summaries
         history = self.history.get_history(conversation_id)
+        summaries = self.history.get_summaries(conversation_id)
 
         # Retrieve relevant memories
         memory_results = await self.memory.search_memories(
@@ -270,16 +379,41 @@ class ChorusBot:
         # Format memories for LLM context
         memories = [mem["content"] for mem in memory_results] if memory_results else None
 
-        # Generate response using LLM
-        response = await self.llm_client.get_response(
-            model=self.config.model,
-            system_prompt=self.config.system_prompt,
-            conversation_history=history,
-            current_message=text,
-            sender=sender,
-            bot_name=self.config.name,
-            memories=memories,
-        )
+        # Get available tools if enabled
+        tools = None
+        if self.config.enable_tools:
+            from src.tools import get_available_tools
+            tools = get_available_tools()
+            logger.info(f"Tools enabled for {self.config.name}: {len(tools)} tool(s) available")
+
+        # Generate response using LLM (with or without tools)
+        if tools:
+            response = await self.llm_client.get_response_with_tools(
+                model=self.config.model,
+                system_prompt=self.config.system_prompt,
+                conversation_history=history,
+                current_message=text,
+                sender=sender,
+                bot_name=self.config.name,
+                memories=memories,
+                summaries=summaries,
+                max_context_messages=self.config.max_messages,
+                max_tokens_response=self.config.max_tokens_response,
+                tools=tools,
+            )
+        else:
+            response = await self.llm_client.get_response(
+                model=self.config.model,
+                system_prompt=self.config.system_prompt,
+                conversation_history=history,
+                current_message=text,
+                sender=sender,
+                bot_name=self.config.name,
+                memories=memories,
+                summaries=summaries,
+                max_context_messages=self.config.max_messages,
+                max_tokens_response=self.config.max_tokens_response,
+            )
 
         if response:
             # Send response
@@ -292,8 +426,8 @@ class ChorusBot:
                 text=response,
             )
 
-            # Track that we just responded
-            self._last_responder = self.config.name
+            # Track consecutive responses
+            self._consecutive_responses[conversation_id] = self._consecutive_responses.get(conversation_id, 0) + 1
 
             logger.info(f"[{self.config.bot_id}] Sent response: {response[:50]}...")
 

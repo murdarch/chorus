@@ -1,7 +1,8 @@
 """OpenRouter LLM client for Chorus bot system."""
 
+import json
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from openai import AsyncOpenAI
 
 from src.config import get_settings
@@ -69,6 +70,8 @@ class LLMClient:
         bot_name: str,
         current_message: str,
         sender: str,
+        max_decision_context: int = 5,
+        max_tokens_decision: int = 10,
     ) -> bool:
         """Determine if the bot should respond to a message.
 
@@ -80,6 +83,8 @@ class LLMClient:
             bot_name: Name of this bot
             current_message: The current message text
             sender: Name of the message sender
+            max_decision_context: Number of recent messages to use for context
+            max_tokens_decision: Maximum tokens for decision response
 
         Returns:
             True if bot should respond
@@ -98,7 +103,7 @@ Respond with ONLY "yes" or "no"."""
 
             # Format conversation for context
             context_lines = []
-            for msg in conversation_history[-5:]:  # Last 5 messages for context
+            for msg in conversation_history[-max_decision_context:]:  # Use configurable context
                 context_lines.append(f"{msg['sender']}: {msg['text']}")
 
             context_lines.append(f"{sender}: {current_message}")
@@ -114,7 +119,7 @@ Respond with ONLY "yes" or "no"."""
                 model=model,
                 messages=messages,
                 temperature=0.3,
-                max_tokens=10,
+                max_tokens=max_tokens_decision,
             )
 
             if response:
@@ -206,6 +211,9 @@ Respond with ONLY the emoji, or "none" if no reaction."""
         sender: str,
         bot_name: str,
         memories: Optional[List[str]] = None,
+        summaries: Optional[List[str]] = None,
+        max_context_messages: int = 10,
+        max_tokens_response: int = 500,
     ) -> Optional[str]:
         """Generate a conversational response.
 
@@ -217,6 +225,9 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             sender: Name of the message sender
             bot_name: Name of this bot
             memories: Optional list of relevant memories to include
+            summaries: Optional list of conversation summaries to include
+            max_context_messages: Number of recent messages to include in context
+            max_tokens_response: Maximum tokens for response
 
         Returns:
             The bot's response text, or None if error
@@ -232,8 +243,16 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             # Build messages list
             messages = [{"role": "system", "content": enhanced_system}]
 
+            # Add summaries of older conversation if available
+            if summaries:
+                for summary in summaries:
+                    messages.append({
+                        "role": "system",
+                        "content": f"Previous conversation summary: {summary}"
+                    })
+
             # Add conversation history
-            for msg in conversation_history[-10:]:  # Last 10 messages
+            for msg in conversation_history[-max_context_messages:]:  # Use configurable context
                 # Determine role based on sender
                 role = "assistant" if msg["sender"] == bot_name else "user"
 
@@ -258,13 +277,245 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                 model=model,
                 messages=messages,
                 temperature=0.7,
-                max_tokens=500,
+                max_tokens=max_tokens_response,
             )
 
             return response
 
         except Exception as e:
             logger.error(f"Error getting response: {e}", exc_info=True)
+            return None
+
+    async def get_response_with_tools(
+        self,
+        model: str,
+        system_prompt: str,
+        conversation_history: List[Dict[str, str]],
+        current_message: str,
+        sender: str,
+        bot_name: str,
+        memories: Optional[List[str]] = None,
+        summaries: Optional[List[str]] = None,
+        max_context_messages: int = 10,
+        max_tokens_response: int = 500,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        max_tool_rounds: int = 3,
+    ) -> Optional[str]:
+        """Generate a conversational response with tool calling support.
+
+        Args:
+            model: Model identifier
+            system_prompt: System prompt defining bot behavior
+            conversation_history: Recent conversation history
+            current_message: The current message to respond to
+            sender: Name of the message sender
+            bot_name: Name of this bot
+            memories: Optional list of relevant memories to include
+            summaries: Optional list of conversation summaries to include
+            max_context_messages: Number of recent messages to include in context
+            max_tokens_response: Maximum tokens for response
+            tools: Optional list of tool definitions for function calling
+            max_tool_rounds: Maximum number of tool call rounds (default: 3)
+
+        Returns:
+            The bot's final response text, or None if error
+        """
+        try:
+            # If no tools provided, fall back to regular response
+            if not tools:
+                return await self.get_response(
+                    model=model,
+                    system_prompt=system_prompt,
+                    conversation_history=conversation_history,
+                    current_message=current_message,
+                    sender=sender,
+                    bot_name=bot_name,
+                    memories=memories,
+                    summaries=summaries,
+                    max_context_messages=max_context_messages,
+                    max_tokens_response=max_tokens_response,
+                )
+
+            # Build enhanced system prompt with memories
+            enhanced_system = system_prompt
+            if memories:
+                memory_text = "\n".join(f"- {m}" for m in memories)
+                enhanced_system += f"\n\nRelevant memories:\n{memory_text}"
+
+            # Build initial messages list
+            messages = [{"role": "system", "content": enhanced_system}]
+
+            # Add summaries of older conversation if available
+            if summaries:
+                for summary in summaries:
+                    messages.append({
+                        "role": "system",
+                        "content": f"Previous conversation summary: {summary}"
+                    })
+
+            # Add conversation history
+            for msg in conversation_history[-max_context_messages:]:
+                role = "assistant" if msg["sender"] == bot_name else "user"
+                if role == "user":
+                    content = f"{msg['sender']}: {msg['text']}"
+                else:
+                    content = msg["text"]
+                messages.append({"role": role, "content": content})
+
+            # Add current message
+            messages.append({
+                "role": "user",
+                "content": f"{sender}: {current_message}"
+            })
+
+            # Import tools module here to avoid circular imports
+            from src.tools import get_search_tool
+
+            search_tool = get_search_tool()
+
+            # Tool calling loop
+            for round_num in range(max_tool_rounds):
+                logger.info(f"LLM call round {round_num + 1} for {bot_name}")
+
+                # Make API call with tools
+                response = await self.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=max_tokens_response,
+                    tools=tools,
+                    tool_choice="auto",
+                )
+
+                choice = response.choices[0]
+                finish_reason = choice.finish_reason
+
+                # If the model returned a text response (no tool call), we're done
+                if finish_reason == "stop" or not choice.message.tool_calls:
+                    content = choice.message.content
+                    if content:
+                        logger.info(f"Final response from {bot_name} (no tools used)")
+                        return content
+                    else:
+                        logger.warning("Model returned no content")
+                        return None
+
+                # Handle tool calls
+                if finish_reason == "tool_calls" and choice.message.tool_calls:
+                    logger.info(f"Model requested {len(choice.message.tool_calls)} tool call(s)")
+
+                    # Add assistant message with tool calls to conversation
+                    messages.append({
+                        "role": "assistant",
+                        "content": choice.message.content,
+                        "tool_calls": [
+                            {
+                                "id": tc.id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.function.name,
+                                    "arguments": tc.function.arguments,
+                                }
+                            }
+                            for tc in choice.message.tool_calls
+                        ]
+                    })
+
+                    # Execute each tool call
+                    for tool_call in choice.message.tool_calls:
+                        function_name = tool_call.function.name
+                        function_args = json.loads(tool_call.function.arguments)
+
+                        logger.info(f"Executing tool: {function_name} with args: {function_args}")
+
+                        # Execute the tool
+                        if function_name == "web_search":
+                            tool_result = await search_tool.search(**function_args)
+                        else:
+                            tool_result = {"error": f"Unknown tool: {function_name}"}
+
+                        # Add tool result to messages
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(tool_result),
+                        })
+
+                        logger.info(f"Tool result: {str(tool_result)[:200]}...")
+
+                    # Continue loop to get final response with tool results
+                    continue
+
+                # If we get here, something unexpected happened
+                logger.warning(f"Unexpected finish_reason: {finish_reason}")
+                return choice.message.content if choice.message.content else None
+
+            # Max rounds reached
+            logger.warning(f"Max tool rounds ({max_tool_rounds}) reached")
+            return "I'm sorry, I encountered an issue while processing your request with multiple tool calls."
+
+        except Exception as e:
+            logger.error(f"Error in get_response_with_tools: {e}", exc_info=True)
+            return None
+
+    async def summarize_conversation(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        bot_name: str,
+        max_tokens: int = 200,
+    ) -> Optional[str]:
+        """Summarize a chunk of conversation history.
+
+        Args:
+            model: Model identifier
+            messages: List of messages to summarize
+            bot_name: Name of this bot
+            max_tokens: Maximum tokens for summary
+
+        Returns:
+            A concise summary of the conversation, or None if error
+        """
+        try:
+            if not messages:
+                return None
+
+            logger.info(f"Summarizing {len(messages)} messages for {bot_name}")
+
+            # Build context from messages
+            conversation_text = []
+            for msg in messages:
+                sender = msg.get("sender", "Unknown")
+                text = msg.get("text", "")
+                conversation_text.append(f"{sender}: {text}")
+
+            conversation_str = "\n".join(conversation_text)
+
+            # Request summary
+            summary_prompt = f"""Summarize this conversation in 2-3 sentences, focusing on key topics discussed and any important decisions or information exchanged:
+
+{conversation_str}
+
+Provide a concise summary:"""
+
+            response = await self.get_completion(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that creates concise conversation summaries."},
+                    {"role": "user", "content": summary_prompt}
+                ],
+                temperature=0.3,
+                max_tokens=max_tokens,
+            )
+
+            if response:
+                logger.info(f"Created summary: {response[:100]}...")
+                return response.strip()
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error summarizing conversation: {e}", exc_info=True)
             return None
 
 

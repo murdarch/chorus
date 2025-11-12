@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # OpenRouter API
     openrouter_api_key: str = Field(..., description="OpenRouter API key")
 
+    # Tavily Search API
+    tavily_api_key: str = Field(default="", description="Tavily API key for web search")
+
     # Azure Bot Service credentials - Nous Bot
     nous_bot_app_id: str = Field(..., description="Azure App ID for Nous bot")
     nous_bot_app_password: str = Field(..., description="Azure App Password for Nous bot")
@@ -51,6 +54,14 @@ class BotConfig:
         app_id: str = "",
         app_password: str = "",
         discord_token: str = "",
+        # Context configuration
+        max_messages: int = 10,
+        max_verbatim_messages: int = 30,
+        max_decision_context: int = 5,
+        max_tokens_response: int = 500,
+        max_tokens_decision: int = 10,
+        # Tool calling
+        enable_tools: bool = False,
     ):
         self.bot_id = bot_id
         self.app_id = app_id
@@ -60,6 +71,16 @@ class BotConfig:
         self.model = model
         self.system_prompt = system_prompt
         self.memory_db_path = f"data/memories/{bot_id}.db"
+
+        # Context limits
+        self.max_messages = max_messages
+        self.max_verbatim_messages = max_verbatim_messages
+        self.max_decision_context = max_decision_context
+        self.max_tokens_response = max_tokens_response
+        self.max_tokens_decision = max_tokens_decision
+
+        # Tool calling
+        self.enable_tools = enable_tools
 
 
 def setup_logging(log_level: str = "INFO") -> None:
@@ -90,10 +111,24 @@ def get_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
                 "You can interact naturally with humans and other AI bots in the conversation. "
                 "Be helpful, engaging, and conversational. You don't need to respond to every "
                 "message - only when you have something valuable to contribute. You can also "
-                "react to messages with emoji when appropriate."
+                "react to messages with emoji when appropriate. "
+                "\n\n"
+                "IMPORTANT: You have access to web search via Tavily. When asked about:\n"
+                "- Current events, news, or headlines\n"
+                "- Today's weather or real-time conditions\n"
+                "- Recent developments or breaking news\n"
+                "- Up-to-date facts or statistics\n"
+                "- Any information that changes frequently\n"
+                "You SHOULD use the web_search tool to get accurate, current information."
             ),
             app_id=settings.nous_bot_app_id,
             app_password=settings.nous_bot_app_password,
+            # Hermes-4 has large context - can handle extended history
+            max_messages=40,
+            max_decision_context=10,
+            max_tokens_response=800,
+            max_tokens_decision=10,
+            enable_tools=True,
         ),
         "claude_bot": BotConfig(
             bot_id="claude_bot",
@@ -104,10 +139,19 @@ def get_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
                 "You can interact naturally with humans and other AI bots in the conversation. "
                 "Be thoughtful, helpful, and conversational. You don't need to respond to every "
                 "message - only when you have something valuable to contribute. You can also "
-                "react to messages with emoji when appropriate."
+                "react to messages with emoji when appropriate. "
+                "You have access to web search via Tavily - use it when you need current information "
+                "or facts that might have changed since your training data."
             ),
             app_id=settings.claude_bot_app_id,
             app_password=settings.claude_bot_app_password,
+            # Claude has 200k context - can handle more history
+            max_messages=50,
+            max_decision_context=10,
+            max_tokens_response=1000,
+            max_tokens_decision=10,
+            # Enable tool calling for web search
+            enable_tools=True,
         ),
     }
 
@@ -127,9 +171,23 @@ def get_discord_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
                 "You can interact naturally with humans and other AI bots in the conversation. "
                 "Be helpful, engaging, and conversational. You don't need to respond to every "
                 "message - only when you have something valuable to contribute. You can also "
-                "react to messages with emoji when appropriate."
+                "react to messages with emoji when appropriate. "
+                "\n\n"
+                "IMPORTANT: You have access to web search via Tavily. When asked about:\n"
+                "- Current events, news, or headlines\n"
+                "- Today's weather or real-time conditions\n"
+                "- Recent developments or breaking news\n"
+                "- Up-to-date facts or statistics\n"
+                "- Any information that changes frequently\n"
+                "You SHOULD use the web_search tool to get accurate, current information."
             ),
             discord_token=settings.discord_nous_token,
+            # Hermes-4 has large context - can handle extended history
+            max_messages=40,
+            max_decision_context=10,
+            max_tokens_response=800,
+            max_tokens_decision=10,
+            enable_tools=True,
         ),
         "discord_claude": BotConfig(
             bot_id="discord_claude",
@@ -140,9 +198,18 @@ def get_discord_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
                 "You can interact naturally with humans and other AI bots in the conversation. "
                 "Be thoughtful, helpful, and conversational. You don't need to respond to every "
                 "message - only when you have something valuable to contribute. You can also "
-                "react to messages with emoji when appropriate."
+                "react to messages with emoji when appropriate. "
+                "You have access to web search via Tavily - use it when you need current information "
+                "or facts that might have changed since your training data."
             ),
             discord_token=settings.discord_claude_token,
+            # Claude has 200k context - can handle more history
+            max_messages=50,
+            max_decision_context=10,
+            max_tokens_response=1000,
+            max_tokens_decision=10,
+            # Enable tool calling for web search
+            enable_tools=True,
         ),
     }
 
