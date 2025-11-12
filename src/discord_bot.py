@@ -282,10 +282,13 @@ class ChorusDiscordBot(commands.Bot):
         channel_id = str(message.channel.id)
         sender = message.author.display_name or message.author.name
 
-        # Always respond to messages with images
-        if has_images:
-            logger.info(f"[{self.config.name}] Message has images - will respond")
+        # Only respond to images if bot supports vision
+        if has_images and self.config.supports_vision:
+            logger.info(f"[{self.config.name}] Message has images and bot supports vision - will respond")
             return True
+        elif has_images and not self.config.supports_vision:
+            logger.info(f"[{self.config.name}] Message has images but bot doesn't support vision - will skip auto-response")
+            # Don't auto-respond, but continue with normal decision logic
 
         # Check for direct mention (always respond)
         if self.user.mentioned_in(message):
@@ -296,6 +299,15 @@ class ChorusDiscordBot(commands.Bot):
         if self.config.name.lower() in text:
             logger.info(f"[{self.config.name}] Bot name found in message - will respond")
             return True
+
+        # Also check Discord display name (e.g., "Sonnet" for "Chorus Sonnet")
+        if self.user and self.user.display_name:
+            display_name_lower = self.user.display_name.lower()
+            # Check both full display name and parts of it
+            for name_part in display_name_lower.split():
+                if name_part in text:
+                    logger.info(f"[{self.config.name}] Display name '{name_part}' found in message - will respond")
+                    return True
 
         # Check if we've responded too many times in a row
         consecutive_count = self._consecutive_responses.get(channel_id, 0)
@@ -406,6 +418,11 @@ class ChorusDiscordBot(commands.Bot):
             tools = get_available_tools()
             logger.info(f"Tools enabled for {self.config.name}: {len(tools)} tool(s) available")
 
+        # Only send images to LLM if bot supports vision
+        images_for_llm = images if self.config.supports_vision else None
+        if images and not self.config.supports_vision:
+            logger.info(f"[{self.config.name}] Ignoring {len(images)} image(s) - bot doesn't support vision")
+
         # Show typing indicator
         async with message.channel.typing():
             # Generate response using LLM (with or without tools)
@@ -422,7 +439,7 @@ class ChorusDiscordBot(commands.Bot):
                     max_context_messages=self.config.max_messages,
                     max_tokens_response=self.config.max_tokens_response,
                     tools=tools,
-                    images=images,
+                    images=images_for_llm,
                 )
                 # Extract text and generated images from result
                 if result:
@@ -443,7 +460,7 @@ class ChorusDiscordBot(commands.Bot):
                     summaries=summaries,
                     max_context_messages=self.config.max_messages,
                     max_tokens_response=self.config.max_tokens_response,
-                    images=images,
+                    images=images_for_llm,
                 )
                 generated_images = []
 

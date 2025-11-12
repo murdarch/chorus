@@ -62,6 +62,8 @@ class BotConfig:
         max_tokens_decision: int = 10,
         # Tool calling
         enable_tools: bool = False,
+        # Vision capability
+        supports_vision: bool = False,
     ):
         self.bot_id = bot_id
         self.app_id = app_id
@@ -81,6 +83,9 @@ class BotConfig:
 
         # Tool calling
         self.enable_tools = enable_tools
+
+        # Vision capability
+        self.supports_vision = supports_vision
 
 
 def setup_logging(log_level: str = "INFO") -> None:
@@ -228,8 +233,10 @@ def get_discord_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
             max_decision_context=10,
             max_tokens_response=1000,
             max_tokens_decision=10,
-            # Enable tool calling for web search
+            # Enable tool calling for web search and image generation
             enable_tools=True,
+            # Claude supports vision
+            supports_vision=True,
         ),
     }
 

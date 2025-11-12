@@ -27,6 +27,11 @@ async def run_bot(bot: ChorusDiscordBot, token: str):
 async def main():
     """Main entry point for Discord bots."""
     settings = get_settings()
+
+    # Configure logging
+    from src.config import setup_logging
+    setup_logging(settings.log_level)
+
     configs = get_discord_bot_configs(settings)
 
     logger.info("Starting Chorus Discord bots...")

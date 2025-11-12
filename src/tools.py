@@ -82,6 +82,43 @@ class SearchTool:
             logger.error(f"Error performing search: {e}", exc_info=True)
             return {"error": f"Search failed: {str(e)}"}
 
+    async def extract(self, url: str) -> Dict[str, Any]:
+        """Extract content from a URL.
+
+        Args:
+            url: The URL to extract content from
+
+        Returns:
+            Dictionary containing extracted content
+        """
+        if not self.enabled:
+            return {
+                "error": "Search tool not available - Tavily API key not configured"
+            }
+
+        try:
+            logger.info(f"Extracting content from URL: {url}")
+
+            # Extract content
+            response = self.client.extract(urls=[url])
+
+            # Format results for LLM
+            if response and "results" in response and len(response["results"]) > 0:
+                result = response["results"][0]
+                formatted_result = {
+                    "url": result.get("url", url),
+                    "title": result.get("title", ""),
+                    "content": result.get("raw_content", ""),
+                }
+                logger.info(f"Extracted {len(formatted_result['content'])} characters from {url}")
+                return formatted_result
+            else:
+                return {"error": "No content could be extracted from URL"}
+
+        except Exception as e:
+            logger.error(f"Error extracting from URL: {e}", exc_info=True)
+            return {"error": f"URL extraction failed: {str(e)}"}
+
 
 class ImageGenerationTool:
     """Image generation tool using OpenRouter API."""
@@ -216,6 +253,28 @@ TAVILY_SEARCH_TOOL = {
     },
 }
 
+URL_EXTRACT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "extract_url",
+        "description": (
+            "Extract and read the full content from a URL. Use this when users share links "
+            "and want you to read the article, blog post, documentation, or webpage content. "
+            "This returns the main text content from the URL."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to extract content from (must be a valid http:// or https:// URL)",
+                },
+            },
+            "required": ["url"],
+        },
+    },
+}
+
 IMAGE_GENERATION_TOOL = {
     "type": "function",
     "function": {
@@ -274,10 +333,11 @@ def get_available_tools() -> List[Dict[str, Any]]:
     """Get list of available tool definitions."""
     tools = []
 
-    # Add Tavily search if available
+    # Add Tavily search and extract if available
     search_tool = get_search_tool()
     if search_tool.enabled:
         tools.append(TAVILY_SEARCH_TOOL)
+        tools.append(URL_EXTRACT_TOOL)
 
     # Add image generation if available
     image_gen_tool = get_image_gen_tool()

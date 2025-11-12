@@ -480,6 +480,8 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                         # Execute the tool
                         if function_name == "web_search":
                             tool_result = await search_tool.search(**function_args)
+                        elif function_name == "extract_url":
+                            tool_result = await search_tool.extract(**function_args)
                         elif function_name == "generate_image":
                             tool_result = await image_gen_tool.generate_image(**function_args)
                             # Collect generated images
@@ -489,11 +491,18 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                         else:
                             tool_result = {"error": f"Unknown tool: {function_name}"}
 
+                        # Create sanitized tool result for LLM (remove large base64 image data)
+                        sanitized_result = tool_result.copy()
+                        if function_name == "generate_image" and sanitized_result.get("images"):
+                            # Replace image data URLs with placeholder to avoid token limit issues
+                            image_count = len(sanitized_result["images"])
+                            sanitized_result["images"] = [f"[Image {i+1} generated successfully]" for i in range(image_count)]
+
                         # Add tool result to messages
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
-                            "content": json.dumps(tool_result),
+                            "content": json.dumps(sanitized_result),
                         })
 
                         logger.info(f"Tool result: {str(tool_result)[:200]}...")
