@@ -195,6 +195,124 @@ Build a Microsoft Teams multi-LLM bot system where multiple AI bots (via OpenRou
 
 ---
 
+## Stage 6: Image Input - Receiving and Processing
+**Goal**: Enable bots to receive and analyze images posted in channels
+**Status**: Complete (Discord only - Teams skipped for now)
+
+### Success Criteria
+- [x] Bots can detect image attachments from Discord
+- [x] Images are downloaded and converted to base64
+- [x] Images are passed to vision-capable LLMs for analysis
+- [x] Both inline images and file attachments supported
+- [x] Image processing utilities created and tested
+
+### Implementation Tasks
+1. ~~Add attachment handling to Teams bot (bot.py)~~ - Skipped
+2. Add attachment handling to Discord bot (discord_bot.py) - ✅ Complete
+3. Create image processing utility (download, resize, base64 encode) - ✅ Complete
+4. Update LLM client to support vision messages (multi-modal content) - ✅ Complete
+5. Handle multiple attachments per message - ✅ Complete
+6. Add image URL support (inline images) - ✅ Complete
+7. Update system prompts to inform bots about vision capabilities - ✅ Complete
+
+### Tests
+- [x] Image processing utilities tested (URL detection, resize, base64 encoding)
+- [x] Large images properly resized to 2048x2048 max
+- [ ] Post image in Discord channel, bot responds with description (manual test needed)
+- [ ] Post multiple images, bot handles all of them (manual test needed)
+
+### Files to Create/Modify
+- `src/image_utils.py` - Image processing utilities ✅
+- `src/bot.py` - Add attachment handling (skipped - Teams)
+- `src/discord_bot.py` - Add attachment handling ✅
+- `src/llm_client.py` - Add vision message support ✅
+- `pyproject.toml` - Add Pillow dependency ✅
+
+### Notes
+- **Bot capability split**: Claude has vision, Nous doesn't (by design)
+- Hermes-4-405b is text-only, so Nous can't see images
+- Tag-team approach: Claude analyzes images, Nous reasons about them
+- Both bots can generate images via tool calling
+
+---
+
+## Stage 7: Image Output - Generation Capabilities
+**Goal**: Enable bots to generate and post images using image-generation models
+**Status**: Complete (Discord only - Teams skipped for now)
+
+### Success Criteria
+- [x] Bots can generate images via OpenRouter
+- [x] Generated images are posted to Discord
+- [x] Tool calling integration for image generation
+- [x] Bot decides when image generation is appropriate
+- [x] System prompts updated to inform bots about generation capability
+
+### Implementation Tasks
+1. Research OpenRouter image generation models (Gemini 2.5 Flash) - ✅ Complete
+2. Add image generation tool to tools.py - ✅ Complete
+3. ~~Implement Teams image posting~~ - Skipped
+4. Implement Discord image posting (file upload) - ✅ Complete
+5. Add decision logic for when to generate images - ✅ Complete (via tool description)
+6. Handle generation errors gracefully - ✅ Complete
+7. Update llm_client to track and return generated images - ✅ Complete
+8. Update system prompts with image generation guidance - ✅ Complete
+
+### Tests
+- [x] Image generation tool initialized and working
+- [x] Base64 data URL parsing implemented
+- [x] Discord file upload from base64 implemented
+- [ ] Ask bot to "draw a sunset", bot generates and posts image (manual test needed)
+- [ ] Multiple images handled correctly (manual test needed)
+- [ ] Generation failures are handled gracefully
+
+### Files to Create/Modify
+- `src/tools.py` - Add image generation tool ✅
+- `src/llm_client.py` - Return dict with text + generated_images ✅
+- `src/discord_bot.py` - Add image posting for Discord ✅
+- `src/config.py` - Update system prompts ✅
+- `scripts/test_image_generation.py` - Test script ✅
+
+---
+
+## Stage 8: Configuration, Memory, and Polish
+**Goal**: Update configuration, memory integration, and robust error handling
+**Status**: Not Started
+
+### Success Criteria
+- [ ] Teams manifest updated to support files
+- [ ] Feature flags for enabling/disabling image features
+- [ ] Image descriptions stored in memory
+- [ ] Graceful handling of unsupported formats
+- [ ] Performance optimization for large images
+
+### Implementation Tasks
+1. Update Teams manifest: supportsFiles: true
+2. Add feature flags: enable_vision, enable_image_generation
+3. Add image size/quality settings to config
+4. Store image analysis in memory system
+5. Add metadata for image attachments
+6. Add file size limits and format validation
+7. Implement image resizing to stay under LLM limits
+8. Add logging for image operations
+9. Add timeout handling for downloads
+
+### Tests
+- [ ] Configuration validates correctly
+- [ ] Bots respect feature flags
+- [ ] Image descriptions appear in memory search results
+- [ ] Post unsupported format, bot explains limitation
+- [ ] Post very large image, bot resizes appropriately
+- [ ] Image context included in conversation history
+
+### Files to Create/Modify
+- `teams-app/manifest.json` - Enable file support
+- `src/config.py` - Add image feature flags
+- `src/memory.py` - Store image context
+- `src/image_utils.py` - Add validation and resizing
+- All bot files - Add error handling
+
+---
+
 ## Post-MVP Enhancements (Future)
 
 ### Teams App Manifest

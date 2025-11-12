@@ -202,6 +202,28 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             logger.error(f"Error in get_reaction: {e}", exc_info=True)
             return None
 
+    def _build_message_content(
+        self,
+        text: str,
+        images: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """Build message content that supports both text and images.
+
+        Args:
+            text: Text content
+            images: Optional list of image dicts from image_utils
+
+        Returns:
+            Either a string (text only) or a list of content items (multi-modal)
+        """
+        if not images:
+            return text
+
+        # Multi-modal format: [{"type": "text", "text": "..."}, {"type": "image_url", ...}]
+        content = [{"type": "text", "text": text}]
+        content.extend(images)
+        return content
+
     async def get_response(
         self,
         model: str,
@@ -214,6 +236,7 @@ Respond with ONLY the emoji, or "none" if no reaction."""
         summaries: Optional[List[str]] = None,
         max_context_messages: int = 10,
         max_tokens_response: int = 500,
+        images: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[str]:
         """Generate a conversational response.
 
@@ -228,6 +251,7 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             summaries: Optional list of conversation summaries to include
             max_context_messages: Number of recent messages to include in context
             max_tokens_response: Maximum tokens for response
+            images: Optional list of image dicts for vision input
 
         Returns:
             The bot's response text, or None if error
@@ -264,13 +288,23 @@ Respond with ONLY the emoji, or "none" if no reaction."""
 
                 messages.append({"role": role, "content": content})
 
-            # Add current message
+            # Add current message (with optional images)
+            current_content = self._build_message_content(
+                f"{sender}: {current_message}",
+                images
+            )
             messages.append({
                 "role": "user",
-                "content": f"{sender}: {current_message}"
+                "content": current_content
             })
 
-            logger.info(f"Generating response for {bot_name} to message from {sender}")
+            if images:
+                logger.info(
+                    f"Generating response for {bot_name} to message from {sender} "
+                    f"with {len(images)} image(s)"
+                )
+            else:
+                logger.info(f"Generating response for {bot_name} to message from {sender}")
 
             # Get completion
             response = await self.get_completion(
@@ -300,7 +334,8 @@ Respond with ONLY the emoji, or "none" if no reaction."""
         max_tokens_response: int = 500,
         tools: Optional[List[Dict[str, Any]]] = None,
         max_tool_rounds: int = 3,
-    ) -> Optional[str]:
+        images: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """Generate a conversational response with tool calling support.
 
         Args:
@@ -316,14 +351,15 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             max_tokens_response: Maximum tokens for response
             tools: Optional list of tool definitions for function calling
             max_tool_rounds: Maximum number of tool call rounds (default: 3)
+            images: Optional list of image dicts for vision input
 
         Returns:
-            The bot's final response text, or None if error
+            Dict with 'text' and 'generated_images' keys, or None if error
         """
         try:
             # If no tools provided, fall back to regular response
             if not tools:
-                return await self.get_response(
+                response = await self.get_response(
                     model=model,
                     system_prompt=system_prompt,
                     conversation_history=conversation_history,
@@ -334,7 +370,9 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                     summaries=summaries,
                     max_context_messages=max_context_messages,
                     max_tokens_response=max_tokens_response,
+                    images=images,
                 )
+                return {"text": response, "generated_images": []} if response else None
 
             # Build enhanced system prompt with memories
             enhanced_system = system_prompt
@@ -362,16 +400,24 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                     content = msg["text"]
                 messages.append({"role": role, "content": content})
 
-            # Add current message
+            # Add current message (with optional images)
+            current_content = self._build_message_content(
+                f"{sender}: {current_message}",
+                images
+            )
             messages.append({
                 "role": "user",
-                "content": f"{sender}: {current_message}"
+                "content": current_content
             })
 
             # Import tools module here to avoid circular imports
-            from src.tools import get_search_tool
+            from src.tools import get_search_tool, get_image_gen_tool
 
             search_tool = get_search_tool()
+            image_gen_tool = get_image_gen_tool()
+
+            # Track generated images
+            generated_images = []
 
             # Tool calling loop
             for round_num in range(max_tool_rounds):
@@ -394,8 +440,11 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                 if finish_reason == "stop" or not choice.message.tool_calls:
                     content = choice.message.content
                     if content:
-                        logger.info(f"Final response from {bot_name} (no tools used)")
-                        return content
+                        logger.info(f"Final response from {bot_name} with {len(generated_images)} generated image(s)")
+                        return {
+                            "text": content,
+                            "generated_images": generated_images
+                        }
                     else:
                         logger.warning("Model returned no content")
                         return None
@@ -431,6 +480,12 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                         # Execute the tool
                         if function_name == "web_search":
                             tool_result = await search_tool.search(**function_args)
+                        elif function_name == "generate_image":
+                            tool_result = await image_gen_tool.generate_image(**function_args)
+                            # Collect generated images
+                            if tool_result.get("success") and tool_result.get("images"):
+                                generated_images.extend(tool_result["images"])
+                                logger.info(f"Collected {len(tool_result['images'])} generated image(s)")
                         else:
                             tool_result = {"error": f"Unknown tool: {function_name}"}
 
@@ -448,11 +503,15 @@ Respond with ONLY the emoji, or "none" if no reaction."""
 
                 # If we get here, something unexpected happened
                 logger.warning(f"Unexpected finish_reason: {finish_reason}")
-                return choice.message.content if choice.message.content else None
+                content = choice.message.content if choice.message.content else None
+                return {"text": content, "generated_images": generated_images} if content else None
 
             # Max rounds reached
             logger.warning(f"Max tool rounds ({max_tool_rounds}) reached")
-            return "I'm sorry, I encountered an issue while processing your request with multiple tool calls."
+            return {
+                "text": "I'm sorry, I encountered an issue while processing your request with multiple tool calls.",
+                "generated_images": generated_images
+            }
 
         except Exception as e:
             logger.error(f"Error in get_response_with_tools: {e}", exc_info=True)

@@ -1,6 +1,8 @@
 """Discord bot implementation for Chorus system."""
 
 import asyncio
+import base64
+import io
 import logging
 import random
 from typing import Dict, List
@@ -11,6 +13,7 @@ from discord.ext import commands
 from src.config import BotConfig
 from src.llm_client import get_llm_client
 from src.memory import MemorySystem
+from src.image_utils import process_discord_attachment
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +227,27 @@ class ChorusDiscordBot(commands.Bot):
         sender = message.author.display_name or message.author.name
         text = message.content
 
-        logger.info(f"[{self.config.name}] Message from {sender} in {message.channel.name}: {text[:50]}...")
+        # Process image attachments
+        images = []
+        if message.attachments:
+            logger.info(f"[{self.config.name}] Message has {len(message.attachments)} attachment(s)")
+            for attachment in message.attachments:
+                try:
+                    image_data = await process_discord_attachment(attachment)
+                    if image_data:
+                        images.append(image_data)
+                        logger.info(f"[{self.config.name}] Processed image: {attachment.filename}")
+                except Exception as e:
+                    logger.error(f"[{self.config.name}] Error processing attachment: {e}", exc_info=True)
+
+        # If no text but has images, add a default prompt
+        if not text and images:
+            text = "What's in this image?"
+
+        logger.info(
+            f"[{self.config.name}] Message from {sender} in {message.channel.name}: "
+            f"{text[:50]}... (images: {len(images)})"
+        )
 
         # Reset consecutive response counter when someone else speaks
         # (This allows for natural back-and-forth)
@@ -239,17 +262,18 @@ class ChorusDiscordBot(commands.Bot):
         )
 
         # Check if we should respond
-        if await self._should_respond(message):
-            await self._send_response(message)
+        if await self._should_respond(message, has_images=len(images) > 0):
+            await self._send_response(message, images=images)
         else:
             # Even if we don't respond, maybe react with an emoji
             await self._maybe_react(message)
 
-    async def _should_respond(self, message: discord.Message) -> bool:
+    async def _should_respond(self, message: discord.Message, has_images: bool = False) -> bool:
         """Determine if the bot should respond to this message.
 
         Args:
             message: Discord message
+            has_images: Whether the message contains images
 
         Returns:
             True if bot should respond
@@ -257,6 +281,11 @@ class ChorusDiscordBot(commands.Bot):
         text = message.content.lower()
         channel_id = str(message.channel.id)
         sender = message.author.display_name or message.author.name
+
+        # Always respond to messages with images
+        if has_images:
+            logger.info(f"[{self.config.name}] Message has images - will respond")
+            return True
 
         # Check for direct mention (always respond)
         if self.user.mentioned_in(message):
@@ -289,14 +318,72 @@ class ChorusDiscordBot(commands.Bot):
         logger.info(f"[{self.config.name}] LLM decision: {'respond' if should_respond else 'skip'}")
         return should_respond
 
-    async def _send_response(self, message: discord.Message):
+    async def _post_generated_images(
+        self,
+        channel: discord.TextChannel,
+        image_data_urls: List[str]
+    ) -> bool:
+        """Post generated images to a Discord channel.
+
+        Args:
+            channel: Discord channel to post to
+            image_data_urls: List of base64 data URLs (e.g., "data:image/png;base64,...")
+
+        Returns:
+            True if successfully posted
+        """
+        try:
+            files = []
+
+            for idx, data_url in enumerate(image_data_urls):
+                try:
+                    # Parse data URL format: data:image/png;base64,iVBORw0...
+                    if not data_url.startswith("data:image/"):
+                        logger.warning(f"Invalid data URL format: {data_url[:50]}...")
+                        continue
+
+                    # Extract MIME type and base64 data
+                    header, base64_data = data_url.split(",", 1)
+                    mime_type = header.split(":")[1].split(";")[0]  # e.g., "image/png"
+
+                    # Get file extension from MIME type
+                    ext = mime_type.split("/")[1]  # e.g., "png"
+
+                    # Decode base64
+                    image_bytes = base64.b64decode(base64_data)
+
+                    # Create Discord file
+                    filename = f"generated_image_{idx + 1}.{ext}"
+                    file = discord.File(io.BytesIO(image_bytes), filename=filename)
+                    files.append(file)
+
+                    logger.info(f"Prepared {filename} ({len(image_bytes)} bytes)")
+
+                except Exception as e:
+                    logger.error(f"Error processing image {idx}: {e}", exc_info=True)
+                    continue
+
+            if files:
+                await channel.send(files=files)
+                logger.info(f"[{self.config.name}] Posted {len(files)} generated image(s)")
+                return True
+            else:
+                logger.warning(f"[{self.config.name}] No valid images to post")
+                return False
+
+        except Exception as e:
+            logger.error(f"[{self.config.name}] Error posting generated images: {e}", exc_info=True)
+            return False
+
+    async def _send_response(self, message: discord.Message, images: List[Dict] = None):
         """Send a response to the message.
 
         Args:
             message: Discord message to respond to
+            images: Optional list of processed image dicts
         """
         channel_id = str(message.channel.id)
-        text = message.content
+        text = message.content or "What's in this image?"  # Default if only images
         sender = message.author.display_name or message.author.name
 
         # Get conversation history and summaries
@@ -323,7 +410,7 @@ class ChorusDiscordBot(commands.Bot):
         async with message.channel.typing():
             # Generate response using LLM (with or without tools)
             if tools:
-                response = await self.llm_client.get_response_with_tools(
+                result = await self.llm_client.get_response_with_tools(
                     model=self.config.model,
                     system_prompt=self.config.system_prompt,
                     conversation_history=history,
@@ -335,9 +422,17 @@ class ChorusDiscordBot(commands.Bot):
                     max_context_messages=self.config.max_messages,
                     max_tokens_response=self.config.max_tokens_response,
                     tools=tools,
+                    images=images,
                 )
+                # Extract text and generated images from result
+                if result:
+                    response_text = result.get("text")
+                    generated_images = result.get("generated_images", [])
+                else:
+                    response_text = None
+                    generated_images = []
             else:
-                response = await self.llm_client.get_response(
+                response_text = await self.llm_client.get_response(
                     model=self.config.model,
                     system_prompt=self.config.system_prompt,
                     conversation_history=history,
@@ -348,28 +443,35 @@ class ChorusDiscordBot(commands.Bot):
                     summaries=summaries,
                     max_context_messages=self.config.max_messages,
                     max_tokens_response=self.config.max_tokens_response,
+                    images=images,
                 )
+                generated_images = []
 
-        if response:
-            # Send response
-            await message.channel.send(response)
+        if response_text:
+            # Send text response
+            await message.channel.send(response_text)
+
+            # Post any generated images
+            if generated_images:
+                logger.info(f"[{self.config.name}] Posting {len(generated_images)} generated image(s)")
+                await self._post_generated_images(message.channel, generated_images)
 
             # Add our response to history
             self.history.add_message(
                 channel_id=channel_id,
                 sender=self.config.name,
-                text=response,
+                text=response_text,
             )
 
             # Track consecutive responses
             self._consecutive_responses[channel_id] = self._consecutive_responses.get(channel_id, 0) + 1
 
-            logger.info(f"[{self.config.name}] Sent response: {response[:50]}...")
+            logger.info(f"[{self.config.name}] Sent response: {response_text[:50]}...")
 
             # Extract and store new memories from this conversation
             # Do this asynchronously without blocking
             asyncio.create_task(
-                self._process_and_store_memories(channel_id, response)
+                self._process_and_store_memories(channel_id, response_text)
             )
         else:
             logger.error(f"[{self.config.name}] Failed to generate response")

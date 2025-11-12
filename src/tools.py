@@ -3,6 +3,7 @@
 import logging
 from typing import Optional, Dict, Any, List
 from tavily import TavilyClient
+from openai import AsyncOpenAI
 
 from src.config import get_settings
 
@@ -82,6 +83,105 @@ class SearchTool:
             return {"error": f"Search failed: {str(e)}"}
 
 
+class ImageGenerationTool:
+    """Image generation tool using OpenRouter API."""
+
+    def __init__(self):
+        """Initialize the image generation tool."""
+        settings = get_settings()
+        self.openrouter_api_key = settings.openrouter_api_key
+
+        if self.openrouter_api_key:
+            self.client = AsyncOpenAI(
+                api_key=self.openrouter_api_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+            self.enabled = True
+            # Default to Gemini 2.5 Flash for image generation
+            self.default_model = "google/gemini-2.5-flash-image-preview"
+            logger.info("Initialized image generation tool")
+        else:
+            self.client = None
+            self.enabled = False
+            logger.warning("OpenRouter API key not found - image generation disabled")
+
+    async def generate_image(
+        self,
+        prompt: str,
+        aspect_ratio: str = "1:1",
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate an image from a text prompt.
+
+        Args:
+            prompt: Description of the image to generate
+            aspect_ratio: Aspect ratio (1:1, 16:9, 9:16, 4:3, 3:4)
+            model: Optional model override
+
+        Returns:
+            Dictionary containing image data or error
+        """
+        if not self.enabled:
+            return {
+                "error": "Image generation not available - OpenRouter API key not configured"
+            }
+
+        try:
+            model_to_use = model or self.default_model
+            logger.info(f"Generating image with {model_to_use}: {prompt[:100]}...")
+
+            # Make API call
+            response = await self.client.chat.completions.create(
+                model=model_to_use,
+                messages=[{"role": "user", "content": prompt}],
+                modalities=["image", "text"],
+                extra_body={
+                    "image_config": {
+                        "aspect_ratio": aspect_ratio
+                    }
+                }
+            )
+
+            # Parse response
+            message = response.choices[0].message
+
+            # Check for images in response
+            images = getattr(message, 'images', None) or []
+
+            if not images:
+                logger.warning("No images in generation response")
+                return {
+                    "success": False,
+                    "error": "Model did not generate an image",
+                    "text_response": message.content or ""
+                }
+
+            # Extract image data URLs
+            image_urls = []
+            for img in images:
+                if hasattr(img, 'image_url') and hasattr(img.image_url, 'url'):
+                    image_urls.append(img.image_url.url)
+                elif isinstance(img, dict) and 'image_url' in img:
+                    image_urls.append(img['image_url']['url'])
+
+            logger.info(f"Successfully generated {len(image_urls)} image(s)")
+
+            return {
+                "success": True,
+                "images": image_urls,
+                "text": message.content or "",
+                "model": model_to_use,
+                "prompt": prompt,
+            }
+
+        except Exception as e:
+            logger.error(f"Error generating image: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"Image generation failed: {str(e)}"
+            }
+
+
 # Tool definition for OpenRouter function calling
 TAVILY_SEARCH_TOOL = {
     "type": "function",
@@ -116,9 +216,42 @@ TAVILY_SEARCH_TOOL = {
     },
 }
 
+IMAGE_GENERATION_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "generate_image",
+        "description": (
+            "Generate an image from a text description. Use this when the user explicitly asks "
+            "to create, draw, generate, or visualize an image. You can also proactively offer "
+            "to generate images when it would enhance the conversation (e.g., creating diagrams, "
+            "illustrations, or visual examples)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": (
+                        "Detailed description of the image to generate. Be specific and descriptive. "
+                        "Include details about style, composition, colors, mood, etc."
+                    ),
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "enum": ["1:1", "16:9", "9:16", "4:3", "3:4"],
+                    "description": "Aspect ratio of the generated image",
+                    "default": "1:1",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
+}
 
-# Global search tool instance
+
+# Global tool instances
 _search_tool: Optional[SearchTool] = None
+_image_gen_tool: Optional[ImageGenerationTool] = None
 
 
 def get_search_tool() -> SearchTool:
@@ -129,6 +262,14 @@ def get_search_tool() -> SearchTool:
     return _search_tool
 
 
+def get_image_gen_tool() -> ImageGenerationTool:
+    """Get or create the global image generation tool instance."""
+    global _image_gen_tool
+    if _image_gen_tool is None:
+        _image_gen_tool = ImageGenerationTool()
+    return _image_gen_tool
+
+
 def get_available_tools() -> List[Dict[str, Any]]:
     """Get list of available tool definitions."""
     tools = []
@@ -137,5 +278,10 @@ def get_available_tools() -> List[Dict[str, Any]]:
     search_tool = get_search_tool()
     if search_tool.enabled:
         tools.append(TAVILY_SEARCH_TOOL)
+
+    # Add image generation if available
+    image_gen_tool = get_image_gen_tool()
+    if image_gen_tool.enabled:
+        tools.append(IMAGE_GENERATION_TOOL)
 
     return tools
