@@ -6,34 +6,50 @@ Get your Chorus bots running in Discord in about 15 minutes!
 
 ## Step 1: Create Discord Applications (5 min)
 
-### Create Nous Bot:
+For each bot you want to run (see `bots/` directory for configured bots):
 
 1. Go to https://discord.com/developers/applications
 2. Click **"New Application"**
-3. Name it: `Chorus Nous`
+3. Name it: `Chorus <BotName>` (e.g., `Chorus Nous`, `Chorus Claude`)
 4. Go to **"Bot"** section in left menu
 5. Click **"Add Bot"** → Confirm
 6. **IMPORTANT**: Under "Privileged Gateway Intents", enable:
    - ✅ **Message Content Intent** (required!)
    - ✅ **Server Members Intent** (optional)
 7. Click **"Reset Token"** → Copy the token
-   - **SAVE THIS!** You'll add it to `.env` as `DISCORD_NOUS_TOKEN`
+   - **SAVE THIS!** You'll add it to `.env` based on your bot's `discord_token_env` setting
 
-### Create Claude Bot:
-
-Repeat the same steps above but name it `Chorus Claude`
-- Save the token as `DISCORD_CLAUDE_TOKEN`
+**Example**: If your bot config has `"discord_token_env": "DISCORD_NOUS_TOKEN"`, add the token to `.env` as `DISCORD_NOUS_TOKEN=...`
 
 ---
 
-## Step 2: Update .env File (1 min)
+## Step 2: Configure Bots and Update .env (5 min)
 
-Add your Discord tokens to `.env`:
+### Create Bot Configurations
+
+See [bots/README.md](bots/README.md) for full details. Quick start:
 
 ```bash
-# Add these lines to your existing .env file
+# Copy the example template for each bot you want
+cp -r bots/_example bots/mybot
+
+# Edit config.json to set:
+# - model (e.g., "anthropic/claude-sonnet-4.5")
+# - discord_token_env (e.g., "DISCORD_MYBOT_TOKEN")
+# - capabilities (tools, vision, etc.)
+
+# Edit prompt.txt to customize personality
+```
+
+### Add Tokens to .env
+
+Add your Discord tokens to `.env` based on each bot's `discord_token_env` setting:
+
+```bash
+# Example tokens (match your bot configs)
 DISCORD_NOUS_TOKEN=your_nous_token_here
 DISCORD_CLAUDE_TOKEN=your_claude_token_here
+DISCORD_MYBOT_TOKEN=your_mybot_token_here
 ```
 
 ---
@@ -62,13 +78,19 @@ Repeat for both bots!
 ## Step 4: Run the Bots (2 min)
 
 ```bash
-cd /home/murdarch/src/python/chorus
+# Run all configured bots
 uv run python discord_app.py
+
+# Or run specific bots only
+ACTIVE_BOTS=nous,claude uv run python discord_app.py
 ```
 
 You should see:
 ```
 Starting Chorus Discord bots...
+Loaded bot configuration: nous (discord_nous)
+Loaded bot configuration: claude (discord_claude)
+Loaded 2 bot(s) from bots/ directory
 Created bot: Nous (bot_id: discord_nous)
 Created bot: Claude (bot_id: discord_claude)
 Nous is now online! Connected as Chorus Nous#1234
@@ -145,17 +167,17 @@ Both sets of bots will have **separate memory systems** (different .db files), s
 
 ### Sharing Memory Between Platforms:
 
-If you want Teams and Discord bots to share the same memories, modify the `bot_id` in `get_discord_bot_configs()` in `src/config.py`:
+If you want Teams and Discord bots to share the same memories, use the same `bot_id` in both bot configurations:
 
-```python
-# Change from:
-bot_id="discord_nous",
-
-# To:
-bot_id="nous_bot",  # Same as Teams bot
+```json
+// In both bots/discord_nous/config.json and Teams config
+{
+  "bot_id": "nous_bot",  // Same ID = shared memory database
+  ...
+}
 ```
 
-This makes them use the same database file!
+This makes them use the same database file in `data/memories/nous_bot.db`!
 
 ---
 

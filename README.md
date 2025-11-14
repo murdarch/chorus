@@ -64,11 +64,31 @@ cp .env.example .env
 # DISCORD_CLAUDE_TOKEN=your_token_here
 ```
 
+### Configure Your Bots
+
+Chorus uses a directory-based configuration system. Each bot lives in its own directory under `bots/`:
+
+```bash
+# Copy the example bot template
+cp -r bots/_example bots/mybot
+
+# Edit the configuration
+nano bots/mybot/config.json  # Set model, tokens, capabilities
+nano bots/mybot/prompt.txt   # Customize personality
+
+# The bot will be automatically discovered and loaded!
+```
+
+See [bots/README.md](bots/README.md) for detailed configuration options.
+
 ### Run the Bots
 
 ```bash
-# Start both Discord bots
+# Start all configured bots
 uv run python discord_app.py
+
+# Or run specific bots only
+ACTIVE_BOTS=nous,claude uv run python discord_app.py
 ```
 
 That's it! Invite your bots to a Discord server and start chatting.
@@ -168,11 +188,12 @@ The bots complement each other perfectly - Claude handles visual tasks while Nou
 
 ## Documentation
 
+- **[Bot Configuration](bots/README.md)** - Add and configure custom bots
 - **[Setup Guide](DISCORD_SETUP.md)** - Detailed Discord bot configuration
 - **[Image Support](IMAGE_SUPPORT.md)** - Vision and generation features
 - **[Deployment](DEPLOYMENT.md)** - Production deployment guide
+- **[Resetting Bots](docs/resetting_bots.md)** - Clear bot memories and troubleshooting
 - **[PRD](PRD.md)** - Product requirements and design decisions
-- **[Implementation Plan](IMPLEMENTATION_PLAN.md)** - Development roadmap
 
 ---
 
@@ -200,6 +221,7 @@ The bots complement each other perfectly - Claude handles visual tasks while Nou
 - [x] Web search integration
 - [x] Emoji reactions
 - [x] Discord integration
+- [x] Directory-based bot configuration (add bots without code changes)
 
 ### Coming Soon
 - [ ] Memory integration for images
