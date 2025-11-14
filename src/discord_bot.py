@@ -331,6 +331,59 @@ class ChorusDiscordBot(commands.Bot):
         logger.info(f"[{self.config.name}] LLM decision: {'respond' if should_respond else 'skip'}")
         return should_respond
 
+    def _split_message(self, text: str, max_length: int = 2000) -> List[str]:
+        """Split a message into chunks that fit Discord's character limit.
+
+        Args:
+            text: The message text to split
+            max_length: Maximum length per chunk (default 2000 for Discord)
+
+        Returns:
+            List of message chunks
+        """
+        if len(text) <= max_length:
+            return [text]
+
+        chunks = []
+        current_chunk = ""
+
+        # Split by paragraphs first (double newline)
+        paragraphs = text.split('\n\n')
+
+        for para in paragraphs:
+            # If adding this paragraph would exceed limit, save current chunk
+            if current_chunk and len(current_chunk) + len(para) + 2 > max_length:
+                chunks.append(current_chunk)
+                current_chunk = ""
+
+            # If paragraph itself is too long, split by sentences/lines
+            if len(para) > max_length:
+                lines = para.split('\n')
+                for line in lines:
+                    if len(line) > max_length:
+                        # Split very long lines at word boundaries
+                        words = line.split(' ')
+                        for word in words:
+                            if len(current_chunk) + len(word) + 1 > max_length:
+                                chunks.append(current_chunk)
+                                current_chunk = word
+                            else:
+                                current_chunk = current_chunk + ' ' + word if current_chunk else word
+                    else:
+                        if current_chunk and len(current_chunk) + len(line) + 1 > max_length:
+                            chunks.append(current_chunk)
+                            current_chunk = line
+                        else:
+                            current_chunk = current_chunk + '\n' + line if current_chunk else line
+            else:
+                current_chunk = current_chunk + '\n\n' + para if current_chunk else para
+
+        # Add remaining chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks if chunks else [text[:max_length]]
+
     async def _post_generated_images(
         self,
         channel: discord.TextChannel,
@@ -466,8 +519,9 @@ class ChorusDiscordBot(commands.Bot):
                 generated_images = []
 
         if response_text:
-            # Send text response
-            await message.channel.send(response_text)
+            # Send text response (split if needed for Discord's 2000 char limit)
+            for chunk in self._split_message(response_text):
+                await message.channel.send(chunk)
 
             # Post any generated images
             if generated_images:
