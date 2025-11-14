@@ -249,9 +249,10 @@ class ChorusDiscordBot(commands.Bot):
             f"{text[:50]}... (images: {len(images)})"
         )
 
-        # Reset consecutive response counter when someone else speaks
-        # (This allows for natural back-and-forth)
-        self._consecutive_responses[channel_id] = 0
+        # Reset consecutive response counter when a HUMAN speaks
+        # (Don't reset for bot messages - prevents bots from resetting each other's counters)
+        if not message.author.bot:
+            self._consecutive_responses[channel_id] = 0
 
         # Add to conversation history
         self.history.add_message(
