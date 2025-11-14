@@ -437,9 +437,12 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                 finish_reason = choice.finish_reason
 
                 # If the model returned a text response (no tool call), we're done
-                if finish_reason == "stop" or not choice.message.tool_calls:
+                # Also accept "length" (hit token limit) as a valid completion
+                if finish_reason in ("stop", "length") or not choice.message.tool_calls:
                     content = choice.message.content
                     if content:
+                        if finish_reason == "length":
+                            logger.info(f"Response from {bot_name} hit token limit but has content")
                         logger.info(f"Final response from {bot_name} with {len(generated_images)} generated image(s)")
                         return {
                             "text": content,
