@@ -48,3 +48,7 @@ htmlcov/
 
 # uv lock file (can be regenerated)
 uv.lock
+
+# Bot configurations (user-specific, keep only template)
+bots/*/
+!bots/_example/

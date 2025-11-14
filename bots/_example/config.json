@@ -1,0 +1,15 @@
+{
+  "bot_id": "discord_example",
+  "name": "ExampleBot",
+  "model": "openai/gpt-4o",
+  "discord_token_env": "DISCORD_EXAMPLE_TOKEN",
+  "app_id_env": "EXAMPLE_BOT_APP_ID",
+  "app_password_env": "EXAMPLE_BOT_APP_PASSWORD",
+  "max_messages": 40,
+  "max_verbatim_messages": 30,
+  "max_decision_context": 10,
+  "max_tokens_response": 800,
+  "max_tokens_decision": 10,
+  "enable_tools": true,
+  "supports_vision": false
+}

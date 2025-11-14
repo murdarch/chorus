@@ -1,9 +1,16 @@
 """Configuration management for Chorus bot system."""
 
+import json
 import logging
-from typing import Dict
+import os
+from pathlib import Path
+from typing import Dict, List, Optional
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -40,6 +47,9 @@ class Settings(BaseSettings):
 
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
+
+    # Bot selection
+    active_bots: str = Field(default="", description="Comma-separated list of bots to load (e.g., 'nous,claude')")
 
 
 class BotConfig:
@@ -86,6 +96,141 @@ class BotConfig:
 
         # Vision capability
         self.supports_vision = supports_vision
+
+
+class BotLoader:
+    """Loads bot configurations from directory-based bot packages."""
+
+    def __init__(self, bots_dir: str = "bots", settings: Settings = None):
+        """Initialize bot loader.
+
+        Args:
+            bots_dir: Directory containing bot packages
+            settings: Application settings for resolving env vars
+        """
+        self.bots_dir = Path(bots_dir)
+        self.settings = settings or get_settings()
+        self.logger = logging.getLogger(__name__)
+
+    def load_bots(self, active_bots: Optional[List[str]] = None) -> Dict[str, BotConfig]:
+        """Load bot configurations from directory.
+
+        Args:
+            active_bots: List of bot names to load. If None, loads all bots.
+
+        Returns:
+            Dictionary mapping bot_id to BotConfig
+        """
+        if not self.bots_dir.exists():
+            self.logger.warning(f"Bots directory not found: {self.bots_dir}")
+            return {}
+
+        configs = {}
+
+        # Get list of bot directories (skip those starting with _)
+        bot_dirs = [d for d in self.bots_dir.iterdir() if d.is_dir() and not d.name.startswith("_")]
+
+        for bot_dir in bot_dirs:
+            bot_name = bot_dir.name
+
+            # Filter by active_bots if specified
+            if active_bots is not None and bot_name not in active_bots:
+                self.logger.info(f"Skipping bot '{bot_name}' (not in ACTIVE_BOTS)")
+                continue
+
+            try:
+                config = self._load_bot_config(bot_dir)
+                if config:
+                    configs[config.bot_id] = config
+                    self.logger.info(f"Loaded bot configuration: {bot_name} ({config.bot_id})")
+            except Exception as e:
+                self.logger.error(f"Error loading bot '{bot_name}': {e}", exc_info=True)
+
+        # Warn about any active_bots that weren't found
+        if active_bots:
+            loaded_names = {Path(d).name for d in bot_dirs}
+            for bot_name in active_bots:
+                if bot_name not in loaded_names:
+                    self.logger.warning(f"Active bot '{bot_name}' not found in {self.bots_dir}")
+
+        return configs
+
+    def _load_bot_config(self, bot_dir: Path) -> Optional[BotConfig]:
+        """Load configuration for a single bot.
+
+        Args:
+            bot_dir: Path to bot directory
+
+        Returns:
+            BotConfig instance or None if loading failed
+        """
+        config_file = bot_dir / "config.json"
+        prompt_file = bot_dir / "prompt.txt"
+
+        # Check required files exist
+        if not config_file.exists():
+            self.logger.error(f"Missing config.json in {bot_dir}")
+            return None
+
+        if not prompt_file.exists():
+            self.logger.error(f"Missing prompt.txt in {bot_dir}")
+            return None
+
+        # Load config JSON
+        with open(config_file, "r") as f:
+            config_data = json.load(f)
+
+        # Load prompt
+        with open(prompt_file, "r") as f:
+            system_prompt = f.read().strip()
+
+        # Resolve environment variables for credentials
+        # Try to get from Settings object first (loaded from .env by pydantic)
+        # Fall back to os.getenv for actual environment variables
+        discord_token_env = config_data.get("discord_token_env", "")
+        app_id_env = config_data.get("app_id_env", "")
+        app_password_env = config_data.get("app_password_env", "")
+
+        # Map env var names to Settings attributes
+        discord_token = ""
+        if discord_token_env:
+            # Try Settings object first
+            discord_token = getattr(self.settings, discord_token_env.lower(), "")
+            # Fall back to os.getenv
+            if not discord_token:
+                discord_token = os.getenv(discord_token_env, "")
+
+        app_id = ""
+        if app_id_env:
+            app_id = getattr(self.settings, app_id_env.lower(), "")
+            if not app_id:
+                app_id = os.getenv(app_id_env, "")
+
+        app_password = ""
+        if app_password_env:
+            app_password = getattr(self.settings, app_password_env.lower(), "")
+            if not app_password:
+                app_password = os.getenv(app_password_env, "")
+
+        # Create BotConfig instance
+        bot_config = BotConfig(
+            bot_id=config_data.get("bot_id"),
+            name=config_data.get("name"),
+            model=config_data.get("model"),
+            system_prompt=system_prompt,
+            app_id=app_id,
+            app_password=app_password,
+            discord_token=discord_token,
+            max_messages=config_data.get("max_messages", 10),
+            max_verbatim_messages=config_data.get("max_verbatim_messages", 30),
+            max_decision_context=config_data.get("max_decision_context", 5),
+            max_tokens_response=config_data.get("max_tokens_response", 500),
+            max_tokens_decision=config_data.get("max_tokens_decision", 10),
+            enable_tools=config_data.get("enable_tools", False),
+            supports_vision=config_data.get("supports_vision", False),
+        )
+
+        return bot_config
 
 
 def setup_logging(log_level: str = "INFO") -> None:
@@ -164,7 +309,32 @@ def get_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
 
 
 def get_discord_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
-    """Create bot configurations for Discord from settings."""
+    """Create bot configurations for Discord from settings.
+
+    First tries to load from bots/ directory. If that fails or directory
+    doesn't exist, falls back to hardcoded configurations.
+    """
+
+    # Try loading from bots/ directory first
+    loader = BotLoader(bots_dir="bots", settings=settings)
+
+    # Parse ACTIVE_BOTS env var
+    active_bots = None
+    if settings.active_bots:
+        active_bots = [name.strip() for name in settings.active_bots.split(",") if name.strip()]
+        logging.getLogger(__name__).info(f"ACTIVE_BOTS specified: {active_bots}")
+
+    # Try loading from directory
+    configs = loader.load_bots(active_bots=active_bots)
+
+    # If we successfully loaded configs OR bots directory exists, return them
+    # (even if empty due to ACTIVE_BOTS filtering)
+    if configs or loader.bots_dir.exists():
+        logging.getLogger(__name__).info(f"Loaded {len(configs)} bot(s) from bots/ directory")
+        return configs
+
+    # Fall back to hardcoded configs only if bots directory doesn't exist
+    logging.getLogger(__name__).warning("Bots directory not found - falling back to hardcoded bot configurations")
 
     configs = {
         "discord_nous": BotConfig(

@@ -301,7 +301,8 @@ class ChorusDiscordBot(commands.Bot):
             return True
 
         # Also check Discord display name (e.g., "Sonnet" for "Chorus Sonnet")
-        if self.user and self.user.display_name:
+        # BUT: Skip this check for messages from other bots to prevent feedback loops
+        if self.user and self.user.display_name and not message.author.bot:
             display_name_lower = self.user.display_name.lower()
             # Check both full display name and parts of it
             for name_part in display_name_lower.split():
