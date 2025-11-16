@@ -364,6 +364,10 @@ def get_discord_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
                 "\n\n"
                 "Note: You cannot see images yourself, but your colleague Claude can! "
                 "If someone posts an image, you might want to defer to Claude for visual analysis."
+                "\n\n"
+                "IMPORTANT: This is Discord - keep responses concise and conversational (typically 1-3 short paragraphs). "
+                "Be brief by default, but don't sacrifice clarity. If a topic needs detail, you can be thorough - "
+                "just stay focused and finish your thoughts cleanly. Make every word count."
             ),
             discord_token=settings.discord_nous_token,
             # Hermes-4 has large context - can handle extended history
@@ -396,6 +400,10 @@ def get_discord_bot_configs(settings: Settings) -> Dict[str, BotConfig]:
                 "\n\n"
                 "You have access to web search via Tavily - use it when you need current information "
                 "or facts that might have changed since your training data."
+                "\n\n"
+                "IMPORTANT: This is Discord - keep responses concise and conversational (typically 1-3 short paragraphs). "
+                "Be brief by default, but don't sacrifice clarity. If a topic needs detail, you can be thorough - "
+                "just stay focused and finish your thoughts cleanly. Make every word count."
             ),
             discord_token=settings.discord_claude_token,
             # Claude has 200k context - can handle more history
