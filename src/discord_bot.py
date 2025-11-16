@@ -219,12 +219,18 @@ class ChorusDiscordBot(commands.Bot):
         if message.author == self.user:
             return
 
+        # Additional check: if author is a bot and name matches, it's likely our own message
+        # This catches cases where self.user comparison fails (e.g., during initialization)
+        sender = message.author.display_name or message.author.name
+        if message.author.bot and self.config.name in sender:
+            logger.debug(f"[{self.config.name}] Ignoring own message (bot message with matching name '{sender}')")
+            return
+
         # Ignore messages from other bots (optional - comment out if you want bot-to-bot interaction)
         # if message.author.bot:
         #     return
 
         channel_id = str(message.channel.id)
-        sender = message.author.display_name or message.author.name
         text = message.content
 
         # Process image attachments
