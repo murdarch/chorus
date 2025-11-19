@@ -31,7 +31,8 @@ class LLMClient:
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
         max_tokens: int = 500,
-    ) -> Optional[str]:
+        extra_body: Optional[Dict[str, Any]] = None,
+    ) -> Any:
         """Get a completion from the LLM.
 
         Args:
@@ -39,25 +40,33 @@ class LLMClient:
             messages: List of message dicts with "role" and "content"
             temperature: Sampling temperature (0.0-1.0)
             max_tokens: Maximum tokens in response
+            extra_body: Optional extra parameters to pass to the API
 
         Returns:
-            The LLM's response text, or None if error
+            The full response object (for reasoning support), or None if error
         """
         try:
             logger.debug(f"Requesting completion from {model}")
             logger.debug(f"Messages: {messages}")
 
-            response = await self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+            # Build API call parameters
+            api_params = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+
+            # Add extra_body if provided (e.g., for reasoning)
+            if extra_body:
+                api_params["extra_body"] = extra_body
+
+            response = await self.client.chat.completions.create(**api_params)
 
             content = response.choices[0].message.content
-            logger.debug(f"Got response: {content[:100]}...")
+            logger.debug(f"Got response: {content[:100] if content else 'None'}...")
 
-            return content
+            return response
 
         except Exception as e:
             logger.error(f"Error getting completion from {model}: {e}", exc_info=True)
@@ -123,7 +132,8 @@ Respond with ONLY "yes" or "no"."""
             )
 
             if response:
-                decision = response.strip().lower()
+                content = response.choices[0].message.content
+                decision = content.strip().lower() if content else ""
                 should_respond = "yes" in decision
                 logger.info(
                     f"LLM decision for {bot_name}: {'RESPOND' if should_respond else 'SKIP'} "
@@ -185,7 +195,8 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             )
 
             if response:
-                reaction = response.strip()
+                content = response.choices[0].message.content
+                reaction = content.strip() if content else ""
                 if reaction == "none" or "none" in reaction.lower():
                     return None
 
@@ -237,7 +248,8 @@ Respond with ONLY the emoji, or "none" if no reaction."""
         max_context_messages: int = 10,
         max_tokens_response: int = 500,
         images: Optional[List[Dict[str, Any]]] = None,
-    ) -> Optional[str]:
+        enable_reasoning: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """Generate a conversational response.
 
         Args:
@@ -252,9 +264,10 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             max_context_messages: Number of recent messages to include in context
             max_tokens_response: Maximum tokens for response
             images: Optional list of image dicts for vision input
+            enable_reasoning: Whether to enable reasoning chains (for models that support it)
 
         Returns:
-            The bot's response text, or None if error
+            Dict with 'text' and 'reasoning_details' keys, or None if error
         """
         try:
             # Build enhanced system prompt with memories
@@ -286,7 +299,13 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                 else:
                     content = msg["text"]
 
-                messages.append({"role": role, "content": content})
+                message_dict = {"role": role, "content": content}
+
+                # Include reasoning_details if present (for reasoning chain continuity)
+                if "reasoning_details" in msg and msg["reasoning_details"]:
+                    message_dict["reasoning_details"] = msg["reasoning_details"]
+
+                messages.append(message_dict)
 
             # Add current message (with optional images)
             current_content = self._build_message_content(
@@ -306,15 +325,32 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             else:
                 logger.info(f"Generating response for {bot_name} to message from {sender}")
 
+            # Prepare extra_body for reasoning if enabled
+            extra_body = None
+            if enable_reasoning:
+                extra_body = {"reasoning": {"enabled": True}}
+                logger.info(f"Reasoning enabled for {bot_name}")
+
             # Get completion
             response = await self.get_completion(
                 model=model,
                 messages=messages,
                 temperature=0.7,
                 max_tokens=max_tokens_response,
+                extra_body=extra_body,
             )
 
-            return response
+            if response:
+                # Extract content and reasoning_details
+                content = response.choices[0].message.content
+                reasoning_details = getattr(response.choices[0].message, 'reasoning_details', None)
+
+                return {
+                    "text": content,
+                    "reasoning_details": reasoning_details
+                }
+
+            return None
 
         except Exception as e:
             logger.error(f"Error getting response: {e}", exc_info=True)
@@ -335,6 +371,7 @@ Respond with ONLY the emoji, or "none" if no reaction."""
         tools: Optional[List[Dict[str, Any]]] = None,
         max_tool_rounds: int = 3,
         images: Optional[List[Dict[str, Any]]] = None,
+        enable_reasoning: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Generate a conversational response with tool calling support.
 
@@ -352,9 +389,10 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             tools: Optional list of tool definitions for function calling
             max_tool_rounds: Maximum number of tool call rounds (default: 3)
             images: Optional list of image dicts for vision input
+            enable_reasoning: Whether to enable reasoning chains (for models that support it)
 
         Returns:
-            Dict with 'text' and 'generated_images' keys, or None if error
+            Dict with 'text', 'generated_images', and 'reasoning_details' keys, or None if error
         """
         try:
             # If no tools provided, fall back to regular response
@@ -371,8 +409,15 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                     max_context_messages=max_context_messages,
                     max_tokens_response=max_tokens_response,
                     images=images,
+                    enable_reasoning=enable_reasoning,
                 )
-                return {"text": response, "generated_images": []} if response else None
+                if response:
+                    return {
+                        "text": response.get("text"),
+                        "generated_images": [],
+                        "reasoning_details": response.get("reasoning_details")
+                    }
+                return None
 
             # Build enhanced system prompt with memories
             enhanced_system = system_prompt
@@ -398,7 +443,14 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                     content = f"{msg['sender']}: {msg['text']}"
                 else:
                     content = msg["text"]
-                messages.append({"role": role, "content": content})
+
+                message_dict = {"role": role, "content": content}
+
+                # Include reasoning_details if present (for reasoning chain continuity)
+                if "reasoning_details" in msg and msg["reasoning_details"]:
+                    message_dict["reasoning_details"] = msg["reasoning_details"]
+
+                messages.append(message_dict)
 
             # Add current message (with optional images)
             current_content = self._build_message_content(
@@ -419,19 +471,29 @@ Respond with ONLY the emoji, or "none" if no reaction."""
             # Track generated images
             generated_images = []
 
+            # Track reasoning details
+            final_reasoning_details = None
+
             # Tool calling loop
             for round_num in range(max_tool_rounds):
                 logger.info(f"LLM call round {round_num + 1} for {bot_name}")
 
+                # Build API call parameters
+                api_params = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": max_tokens_response,
+                    "tools": tools,
+                    "tool_choice": "auto",
+                }
+
+                # Add reasoning if enabled
+                if enable_reasoning:
+                    api_params["extra_body"] = {"reasoning": {"enabled": True}}
+
                 # Make API call with tools
-                response = await self.client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    temperature=0.7,
-                    max_tokens=max_tokens_response,
-                    tools=tools,
-                    tool_choice="auto",
-                )
+                response = await self.client.chat.completions.create(**api_params)
 
                 choice = response.choices[0]
                 finish_reason = choice.finish_reason
@@ -443,10 +505,15 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                     if content:
                         if finish_reason == "length":
                             logger.info(f"Response from {bot_name} hit token limit but has content")
+
+                        # Extract reasoning_details if present
+                        reasoning_details = getattr(choice.message, 'reasoning_details', None)
+
                         logger.info(f"Final response from {bot_name} with {len(generated_images)} generated image(s)")
                         return {
                             "text": content,
-                            "generated_images": generated_images
+                            "generated_images": generated_images,
+                            "reasoning_details": reasoning_details
                         }
                     else:
                         logger.warning("Model returned no content")
@@ -516,13 +583,15 @@ Respond with ONLY the emoji, or "none" if no reaction."""
                 # If we get here, something unexpected happened
                 logger.warning(f"Unexpected finish_reason: {finish_reason}")
                 content = choice.message.content if choice.message.content else None
-                return {"text": content, "generated_images": generated_images} if content else None
+                reasoning_details = getattr(choice.message, 'reasoning_details', None) if choice.message else None
+                return {"text": content, "generated_images": generated_images, "reasoning_details": reasoning_details} if content else None
 
             # Max rounds reached
             logger.warning(f"Max tool rounds ({max_tool_rounds}) reached")
             return {
                 "text": "I'm sorry, I encountered an issue while processing your request with multiple tool calls.",
-                "generated_images": generated_images
+                "generated_images": generated_images,
+                "reasoning_details": None
             }
 
         except Exception as e:
@@ -580,8 +649,11 @@ Provide a concise summary:"""
             )
 
             if response:
-                logger.info(f"Created summary: {response[:100]}...")
-                return response.strip()
+                content = response.choices[0].message.content
+                if content:
+                    logger.info(f"Created summary: {content[:100]}...")
+                    return content.strip()
+                return None
 
             return None
 

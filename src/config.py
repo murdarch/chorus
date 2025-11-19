@@ -74,6 +74,8 @@ class BotConfig:
         enable_tools: bool = False,
         # Vision capability
         supports_vision: bool = False,
+        # Reasoning capability
+        enable_reasoning: bool = False,
     ):
         self.bot_id = bot_id
         self.app_id = app_id
@@ -96,6 +98,9 @@ class BotConfig:
 
         # Vision capability
         self.supports_vision = supports_vision
+
+        # Reasoning capability
+        self.enable_reasoning = enable_reasoning
 
 
 class BotLoader:
@@ -228,6 +233,7 @@ class BotLoader:
             max_tokens_decision=config_data.get("max_tokens_decision", 10),
             enable_tools=config_data.get("enable_tools", False),
             supports_vision=config_data.get("supports_vision", False),
+            enable_reasoning=config_data.get("enable_reasoning", False),
         )
 
         return bot_config

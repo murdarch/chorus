@@ -51,7 +51,7 @@ class ConversationHistory:
         # Track if summarization is in progress
         self._summarizing: Dict[str, bool] = {}
 
-    def add_message(self, channel_id: str, sender: str, text: str, timestamp: datetime = None):
+    def add_message(self, channel_id: str, sender: str, text: str, timestamp: datetime = None, reasoning_details: dict = None):
         """Add a message to conversation history.
 
         Args:
@@ -59,6 +59,7 @@ class ConversationHistory:
             sender: Name/ID of message sender
             text: Message content
             timestamp: Message timestamp (defaults to now)
+            reasoning_details: Optional reasoning chain details from model response
         """
         if channel_id not in self._histories:
             self._histories[channel_id] = []
@@ -69,6 +70,10 @@ class ConversationHistory:
             "text": text,
             "timestamp": timestamp or datetime.utcnow(),
         }
+
+        # Store reasoning details if provided (for models that support reasoning chains)
+        if reasoning_details:
+            message["reasoning_details"] = reasoning_details
 
         history = self._histories[channel_id]
         history.append(message)
@@ -487,6 +492,7 @@ class ChorusDiscordBot(commands.Bot):
         # Show typing indicator
         async with message.channel.typing():
             # Generate response using LLM (with or without tools)
+            reasoning_details = None
             if tools:
                 result = await self.llm_client.get_response_with_tools(
                     model=self.config.model,
@@ -501,16 +507,18 @@ class ChorusDiscordBot(commands.Bot):
                     max_tokens_response=self.config.max_tokens_response,
                     tools=tools,
                     images=images_for_llm,
+                    enable_reasoning=self.config.enable_reasoning,
                 )
-                # Extract text and generated images from result
+                # Extract text, generated images, and reasoning details from result
                 if result:
                     response_text = result.get("text")
                     generated_images = result.get("generated_images", [])
+                    reasoning_details = result.get("reasoning_details")
                 else:
                     response_text = None
                     generated_images = []
             else:
-                response_text = await self.llm_client.get_response(
+                result = await self.llm_client.get_response(
                     model=self.config.model,
                     system_prompt=self.config.system_prompt,
                     conversation_history=history,
@@ -522,7 +530,14 @@ class ChorusDiscordBot(commands.Bot):
                     max_context_messages=self.config.max_messages,
                     max_tokens_response=self.config.max_tokens_response,
                     images=images_for_llm,
+                    enable_reasoning=self.config.enable_reasoning,
                 )
+                # Extract text and reasoning details from result
+                if result:
+                    response_text = result.get("text")
+                    reasoning_details = result.get("reasoning_details")
+                else:
+                    response_text = None
                 generated_images = []
 
         if response_text:
@@ -535,11 +550,12 @@ class ChorusDiscordBot(commands.Bot):
                 logger.info(f"[{self.config.name}] Posting {len(generated_images)} generated image(s)")
                 await self._post_generated_images(message.channel, generated_images)
 
-            # Add our response to history
+            # Add our response to history (with reasoning_details if present)
             self.history.add_message(
                 channel_id=channel_id,
                 sender=self.config.name,
                 text=response_text,
+                reasoning_details=reasoning_details,
             )
 
             # Track consecutive responses
